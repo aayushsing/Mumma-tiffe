@@ -1,27 +1,22 @@
 /**
- * index.js - Mumma Tiffin (Single-file full stack)
+ * index.js - Mumma Tiffin (Single-file full stack, no demo data)
  *
- * Features:
- * - Express backend with SQLite (mumma.db)
- * - User register/login (JWT)
- * - Multi-admin login/create/list (each admin can be assigned a city)
- * - Menu CRUD (admin); public menu reads filtered by city and active flag
- * - Orders (users create; admins view/update status)
- * - Notifications (admins post; users see popup banner)
- * - Addresses saving
- * - Embedded single-page frontend (responsive, dark/light, EN/HI, admin dashboard)
+ * - SQLite (mumma.db) created automatically
+ * - No demo foods or admins automatically inserted (per request)
+ * - Provides /api/admin/bootstrap to create the first admin only if admins table is empty
+ * - Full frontend embedded and served at /
  *
- * Run:
- * 1) npm init -y
- * 2) npm install express sqlite3 bcryptjs cors dotenv jsonwebtoken
- * 3) node index.js
+ * Usage:
+ *   npm init -y
+ *   npm install express sqlite3 bcryptjs cors dotenv jsonwebtoken
+ *   node index.js
  *
  * Deploy:
- * - Push to GitHub and deploy on Render/Railway with start command `node index.js`
- * - Set env var JWT_SECRET to a secure value on the host
+ *   - Push to GitHub and deploy on Render (start command: node index.js)
+ *   - Set env JWT_SECRET on the host if desired
  *
- * IMPORTANT: This is a demo starter. For production, migrate to a server-side DB (Postgres), secure JWT_SECRET,
- * enable HTTPS, add input validation and rate-limiting, and add proper logging & backups.
+ * Security note:
+ *   - For production, set a secure JWT_SECRET env var and use HTTPS, input validation and rate limiting.
  */
 
 const express = require('express');
@@ -30,7 +25,6 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 app.use(cors());
@@ -40,9 +34,7 @@ const DB_FILE = path.join(__dirname, 'mumma.db');
 const JWT_SECRET = process.env.JWT_SECRET || 'mummatiffin_dev_secret_change_me';
 const PORT = process.env.PORT || 3000;
 
-/* -----------------------
-   SQLite helpers & init
-   ----------------------- */
+// --- SQLite helpers
 const db = new sqlite3.Database(DB_FILE);
 
 function runSql(sql, params = []) {
@@ -70,9 +62,9 @@ function allSql(sql, params = []) {
   });
 }
 
+// --- Initialize DB tables (no demo data)
 async function initDb() {
-  // create tables
-  await runSql(`PRAGMA foreign_keys = ON;`);
+  await runSql('PRAGMA foreign_keys = ON;');
   await runSql(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT UNIQUE,
@@ -127,50 +119,12 @@ async function initDb() {
     created_at TEXT,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );`);
-
-  // default admins
-  const admins = [
-    { email: 'admin@mummatiffin.com', pass: 'admin123', name: 'Super Admin', city: 'All' },
-    { email: 'manager@mummatiffin.com', pass: 'manager123', name: 'City Manager', city: 'Delhi' }
-  ];
-
-  for (const a of admins) {
-    const row = await getSql('SELECT id FROM admins WHERE email = ?', [a.email]);
-    if (!row) {
-      const hash = await bcrypt.hash(a.pass, 10);
-      await runSql('INSERT INTO admins (email, password_hash, name, city, created_at) VALUES (?,?,?,?,?)',
-        [a.email, hash, a.name, a.city, new Date().toISOString()]);
-      console.log('Created admin', a.email);
-    } else {
-      console.log('Admin exists', a.email);
-    }
-  }
-
-  // sample menu (only insert if not present)
-  const anyMenu = await getSql('SELECT id FROM menu LIMIT 1');
-  if (!anyMenu) {
-    const sample = [
-      ['b1','breakfast','Aloo Paratha + Curd','आलू पराठा + दही',60,'Hearty potato paratha','मज़ेदार आलू पराठा','Delhi','06:00','09:00',1],
-      ['b2','breakfast','Poha + Tea','पोहा + चाय',45,'Light & tasty poha','हल्का और स्वादिष्ट पोहा','Pune','06:30','09:00',1],
-      ['l1','lunch','Dal + Roti + Sabzi','दाल + रोटी + सब्ज़ी',85,'Balanced vegetarian meal','संतुलित शाकाहारी भोजन','All','11:00','14:00',1],
-      ['d1','dinner','Khichdi + Papad','खिचड़ी + पापड़',70,'Comforting khichdi','आरामदेह खिचड़ी','All','18:00','20:00',1]
-    ];
-    for (const m of sample) {
-      await runSql(`INSERT INTO menu (id,meal,name_en,name_hi,price,description_en,description_hi,city,available_from,available_to,active) VALUES (?,?,?,?,?,?,?,?,?,?,?)`, m);
-    }
-    await runSql('INSERT INTO notifications (text, created_at, target_city) VALUES (?,?,?)', ['Welcome to Mumma Tiffin — live notifications enabled!', new Date().toISOString(), 'All']);
-    console.log('Inserted sample menu and welcome notification');
-  }
+  console.log('DB initialized (no demo data).');
 }
 
-/* initialize DB on startup */
-initDb().catch(err => {
-  console.error('DB init failed', err);
-});
+initDb().catch(e => { console.error('DB init error', e); });
 
-/* -----------------------
-   Auth helpers
-   ----------------------- */
+// --- Auth helpers
 function signToken(payload) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 }
@@ -178,7 +132,7 @@ function verifyAuthHeader(req, res, next) {
   const h = req.headers.authorization;
   if (!h) return res.status(401).json({ error: 'missing authorization' });
   const parts = h.split(' ');
-  if (parts.length !== 2) return res.status(401).json({ error: 'invalid authorization' });
+  if (parts.length !== 2) return res.status(401).json({ error: 'invalid authorization format' });
   const token = parts[1];
   try {
     const data = jwt.verify(token, JWT_SECRET);
@@ -196,11 +150,11 @@ function requireRole(role) {
   };
 }
 
-/* -----------------------
-   API Endpoints
-   ----------------------- */
+// ---------------------
+// Public endpoints
+// ---------------------
 
-// Public: menu with optional city filter (only active items)
+// 1) Menu (public) with optional city filter (only active)
 app.get('/api/menu', async (req, res) => {
   try {
     const city = req.query.city;
@@ -212,7 +166,7 @@ app.get('/api/menu', async (req, res) => {
   }
 });
 
-// Notifications (public)
+// 2) Notifications (public)
 app.get('/api/notifications', async (req, res) => {
   try {
     const rows = await allSql('SELECT id,text,created_at,target_city FROM notifications ORDER BY created_at DESC LIMIT 50');
@@ -222,7 +176,7 @@ app.get('/api/notifications', async (req, res) => {
   }
 });
 
-// User register
+// 3) User register
 app.post('/api/register', async (req, res) => {
   try {
     const { email, password, name } = req.body;
@@ -239,7 +193,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// User login
+// 4) User login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -250,6 +204,25 @@ app.post('/api/login', async (req, res) => {
     if (!ok) return res.status(400).json({ error: 'invalid credentials' });
     const token = signToken({ id: user.id, email: user.email, role: 'user' });
     res.json({ user: { id: user.id, email: user.email, name: user.name }, token });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// ---------------------
+// Admin endpoints
+// ---------------------
+
+// Bootstrap endpoint: create first admin ONLY if no admins exist
+app.post('/api/admin/bootstrap', async (req, res) => {
+  try {
+    const count = await getSql('SELECT COUNT(*) as c FROM admins');
+    if (count && count.c > 0) return res.status(400).json({ error: 'admins already exist. bootstrap disabled.' });
+    const { email, password, name, city } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'email & password required' });
+    const hash = await bcrypt.hash(password, 10);
+    await runSql('INSERT INTO admins (email, password_hash, name, city, created_at) VALUES (?,?,?,?,?)', [email, hash, name || '', city || 'All', new Date().toISOString()]);
+    return res.json({ ok: true, message: 'first admin created' });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
@@ -270,7 +243,7 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// Admin create other admins
+// Admin create other admins (requires admin auth)
 app.post('/api/admin/create', verifyAuthHeader, requireRole('admin'), async (req, res) => {
   try {
     const { email, password, name, city } = req.body;
@@ -285,7 +258,7 @@ app.post('/api/admin/create', verifyAuthHeader, requireRole('admin'), async (req
   }
 });
 
-// Admin list
+// Admin list (requires admin auth)
 app.get('/api/admin/list', verifyAuthHeader, requireRole('admin'), async (req, res) => {
   try {
     const rows = await allSql('SELECT id,email,name,city,created_at FROM admins ORDER BY id');
@@ -331,14 +304,14 @@ app.delete('/api/admin/menu/:id', verifyAuthHeader, requireRole('admin'), async 
   }
 });
 
-// Orders - create
+// Orders - create (user)
 app.post('/api/orders', verifyAuthHeader, requireRole('user'), async (req, res) => {
   try {
     const { items, total, address, date, time, meal } = req.body;
     if (!items || !address) return res.status(400).json({ error: 'items & address required' });
     const now = new Date().toISOString();
     const r = await runSql('INSERT INTO orders (user_id, total, info, status, created_at) VALUES (?,?,?,?,?)', [req.user.id, total || 0, JSON.stringify({ items, address, date, time, meal }), 'pending', now]);
-    // Create a notification to inform admins / users
+    // notify via notifications table
     await runSql('INSERT INTO notifications (text, created_at, target_city) VALUES (?,?,?)', [`New order ${r.lastID} placed`, new Date().toISOString(), address.city || 'All']);
     res.json({ ok: true, orderId: r.lastID });
   } catch (err) {
@@ -346,7 +319,7 @@ app.post('/api/orders', verifyAuthHeader, requireRole('user'), async (req, res) 
   }
 });
 
-// Orders - user's own
+// Orders - user view
 app.get('/api/orders', verifyAuthHeader, requireRole('user'), async (req, res) => {
   try {
     const rows = await allSql('SELECT id,total,info,status,created_at FROM orders WHERE user_id = ? ORDER BY created_at DESC', [req.user.id]);
@@ -356,7 +329,7 @@ app.get('/api/orders', verifyAuthHeader, requireRole('user'), async (req, res) =
   }
 });
 
-// Admin orders (view & update)
+// Admin orders view & update
 app.get('/api/admin/orders', verifyAuthHeader, requireRole('admin'), async (req, res) => {
   try {
     const admin = await getSql('SELECT * FROM admins WHERE id = ?', [req.user.id]);
@@ -404,11 +377,11 @@ app.get('/api/address', verifyAuthHeader, requireRole('user'), async (req, res) 
   }
 });
 
-/* -----------------------
-   Embedded frontend
-   ----------------------- */
+// ---------------------
+// Embedded frontend HTML (same UI; splash title set to "Aayush Singh — Mumma Tiffin 🍱")
+// ---------------------
 const frontendHtml = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Mumma Tiffin</title>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Aayush Singh — Mumma Tiffin 🍱</title>
 <style>
 :root{--bg:#f6f7fb;--card:#fff;--text:#0f1724;--muted:#546077;--accent:#ff5a5f}
 [data-theme="dark"]{--bg:#071026;--card:#071021;--text:#e6eef8;--muted:#9fb0c8;--accent:#ff8b8f}
@@ -433,7 +406,7 @@ const frontendHtml = `<!doctype html>
 </style>
 </head><body>
 <div id="splash" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,7,18,0.9);color:#fff;flex-direction:column;z-index:9999">
-  <div style="font-size:28px;font-weight:800">Mumma Tiffin</div>
+  <div style="font-size:28px;font-weight:800">Aayush Singh — Mumma Tiffin 🍱</div>
   <div class="small">Multi-city • Multi-admin • Live orders</div>
 </div>
 
@@ -638,7 +611,7 @@ async function loadNotifs(){
 function showToast(text){ const t = document.createElement('div'); t.className='toast'; t.innerHTML = `<strong>Notice</strong><div>${text}</div>`; document.body.appendChild(t); setTimeout(()=>{ t.style.opacity=1; },50); setTimeout(()=>{ t.remove(); },6000); }
 
 /* ---- Admin flow ---- */
-function openAdminLogin(){ const email = prompt('Admin email (default admin@mummatiffin.com)'); const pass = prompt('Admin password (default admin123)'); if(!email||!pass) return; fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass})}).then(r=>r.json()).then(j=>{ if(j.admin || j.token){ state.adminToken=j.token || j.admin?.token; showAdminPanel(); alert('Admin logged'); } else alert(j.error||'Admin login failed'); }); }
+function openAdminLogin(){ const email = prompt('Admin email (create via /api/admin/bootstrap if none exists)'); const pass = prompt('Admin password'); if(!email||!pass) return; fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password:pass})}).then(r=>r.json()).then(j=>{ if(j.admin || j.token){ state.adminToken=j.token || j.admin?.token; showAdminPanel(); alert('Admin logged'); } else alert(j.error||'Admin login failed'); }); }
 function showAdminPanel(){ document.getElementById('adminPanel').classList.remove('hidden'); loadAdminMenu(); loadAdminOrders(); loadAdminNotifs(); loadAdmins(); selectTab('menu'); }
 
 document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',(e)=> selectTab(e.currentTarget.dataset.tab)));
@@ -658,20 +631,24 @@ document.getElementById('createAdminBtn').addEventListener('click', async ()=>{ 
 
 </script></body></html>`;
 
-/* Serve frontend */
+// Serve frontend
 app.get('/', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(frontendHtml);
 });
 
-/* Fallback for SPA paths */
-app.get('/app/*', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(frontendHtml);
+// Fallback for SPA paths
+app.get('*', (req, res) => {
+  // For other routes that are not API, serve frontend
+  if (!req.path.startsWith('/api/')) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(frontendHtml);
+  }
+  res.status(404).json({ error: 'Not found' });
 });
 
-/* Start server */
+// Start server
 app.listen(PORT, () => {
   console.log(`Mumma Tiffin running on port ${PORT}`);
-  console.log(`Open http://localhost:${PORT} in your browser`);
+  console.log(`Open http://localhost:${PORT}`);
 });
